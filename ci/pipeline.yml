@@ -1,0 +1,178 @@
+---
+resources:
+  - name: ui-tracker
+    type: tracker
+    source:
+      token: {{tracker-token}}
+      project_id: {{tracker-ui-project-id}}
+      tracker_url: https://www.pivotaltracker.com
+  - name: ui-repo-master
+    type: git
+    source:
+      uri: git@github.com:metflix/ui.git
+      branch: master
+      private_key: {{github-private-key}}
+  - name: ui-repo-dev
+    type: git
+    source:
+      uri: https://github.com/metflix/ui
+      branch: development
+  - name: cf-prod
+    type: cf
+    source:
+      api: {{cf-api}}
+      username: {{cf-username}}
+      password: {{cf-password}}
+      organization: {{cf-org}}
+      space: {{cf-space}}
+      skip_cert_check: true
+  - name: cf-dev
+    type: cf
+    source:
+      api: {{cf-api}}
+      username: {{cf-username}}
+      password: {{cf-password}}
+      organization: {{cf-org}}
+      space: {{cf-space-dev}}
+      skip_cert_check: true
+  - name: m2
+    type: docker-image
+    source:
+      repository: {{docker-repo}}
+
+jobs:
+  - name: ui-unit-dev
+    serial: true
+    plan:
+      - get: ui-repo-dev
+        trigger: true
+      - get: m2
+      - task: unit
+        config:
+          platform: linux
+          image_resource:
+            type: docker-image
+            source:
+              repository: java
+              tag: 8-jdk-alpine
+          inputs:
+            - name: ui-repo-dev
+              path: repo
+            - name: m2
+          run:
+            path: sh
+            args:
+            - repo/ci/tasks/unit.sh
+  - name: ui-unit-master
+    serial: true
+    plan:
+      - get: ui-repo-master
+        trigger: true
+        passed: [ merge-to-master ]
+      - get: m2
+      - task: unit
+        config:
+          platform: linux
+          image_resource:
+            type: docker-image
+            source:
+              repository: java
+              tag: 8-jdk-alpine
+          inputs:
+            - name: ui-repo-master
+              path: repo
+            - name: m2
+          run:
+            path: sh
+            args:
+            - repo/ci/tasks/unit.sh
+      - put: ui-tracker
+        params:
+          repos:
+          - ui-repo-master
+
+  - name: merge-to-master
+    plan:
+      - get: repo
+        resource: ui-repo-dev
+        passed: [ ui-unit-dev ]
+      - get: repo-master
+        resource: ui-repo-master
+      - task: merge-to-master
+        config:
+          platform: linux
+          image_resource:
+            type: docker-image
+            source:
+              repository: getourneau/alpine-bash-git
+          inputs:
+            - name: repo
+            - name: repo-master
+          outputs:
+            - name: out
+          run:
+            path: /bin/bash
+            args:
+            - repo/ci/tasks/merge-to-master.sh
+      - put: repo-master
+        resource: ui-repo-master
+        params:
+          repository: out
+
+  - name: ui-deploy-dev
+    plan:
+      - get: ui-repo-dev
+        trigger: true
+        passed: [ ui-unit-dev ]
+      - get: m2
+      - task: package
+        config:
+          platform: linux
+          image_resource:
+            type: docker-image
+            source:
+              repository: java
+              tag: 8-jdk-alpine
+          inputs:
+            - name: ui-repo-dev
+              path: repo
+            - name: m2
+          outputs:
+            - name: output
+          run:
+            path: sh
+            args:
+            - repo/ci/tasks/package.sh
+      - put: cf-dev
+        params:
+          manifest: ui-repo-dev/manifest-dev.yml
+          path: output/app.jar
+          current_app_name: ui-metflix-dev
+  - name: ui-deploy-prod
+    plan:
+      - get: ui-repo-master
+        passed: [ ui-unit-master ]
+      - get: m2
+      - task: package
+        config:
+          platform: linux
+          image_resource:
+            type: docker-image
+            source:
+              repository: java
+              tag: 8-jdk-alpine
+          inputs:
+            - name: ui-repo-master
+              path: repo
+            - name: m2
+          outputs:
+            - name: output
+          run:
+            path: sh
+            args:
+            - repo/ci/tasks/package.sh
+      - put: cf-prod
+        params:
+          manifest: ui-repo-master/manifest.yml
+          path: output/app.jar
+          current_app_name: ui-metflix
