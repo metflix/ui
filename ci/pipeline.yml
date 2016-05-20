@@ -63,6 +63,10 @@ jobs:
             path: sh
             args:
             - repo/ci/tasks/unit.sh
+      - put: ui-tracker
+        params:
+          repos:
+          - ui-repo-master
   - name: ui-unit-master
     serial: true
     plan:
@@ -86,10 +90,6 @@ jobs:
             path: sh
             args:
             - repo/ci/tasks/unit.sh
-      - put: ui-tracker
-        params:
-          repos:
-          - ui-repo-master
 
   - name: merge-to-master
     plan:
@@ -151,6 +151,7 @@ jobs:
   - name: ui-deploy-prod
     plan:
       - get: ui-repo-master
+        trigger: true
         passed: [ ui-unit-master ]
       - get: m2
       - task: package
